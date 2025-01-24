@@ -3,39 +3,45 @@ package main
 import (
 	"context"
 	"log"
-	"net"
 	"time"
 
-	pb "user_attestor_module/pkg/protos/user"
+	pb "user_attestor_module/proto/user_attestor"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const socketPath = "/tmp/grpc_unix.sock"
-
 func main() {
-	conn, err := grpc.Dial(
-		socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			return net.DialTimeout("unix", addr, time.Second)
-		}),
-	)
-	if err != nil {
-		log.Fatalf("failed to connect to gRPC server: %v", err)
-	}
-	defer conn.Close()
-
-	client := pb.NewUserServiceClient(conn)
+	const socketPath = "/tmp/user_attestor_module.sock"
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	response, err := client.GetUserInfo(ctx, &pb.EmptyMessage{})
+	conn, err := grpc.NewClient(
+		"unix://"+socketPath,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 	if err != nil {
-		log.Fatalf("error calling GetUserInfo: %v", err)
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	client := pb.NewAttestationServiceClient(conn)
+
+	res, err := client.GetUserAttestation(ctx, &pb.Empty{})
+	if err != nil {
+		log.Fatalf("Could not get attestation: %v", err)
 	}
 
-	log.Printf("Received attestation token: %s", response.GetAttestationToken())
-	log.Printf("User Info: %v", response.GetUserInfo())
+	log.Printf("Token: %s", res.Token)
+	log.Printf("Name: %s", res.UserInfo.Name)
+	log.Printf("Secret: %s", res.UserInfo.Secret)
+	log.Printf("UserID: %s", res.UserInfo.SystemInfo.UserId)
+	log.Printf("Username: %s", res.UserInfo.SystemInfo.Username)
+	log.Printf("GroupID: %s", res.UserInfo.SystemInfo.GroupId)
+	log.Printf("GroupName: %s", res.UserInfo.SystemInfo.GroupName)
+
+	for _, group := range res.UserInfo.SystemInfo.SupplementaryGroups {
+		log.Printf("Supplementary GroupID: %s", group.GroupId)
+		log.Printf("Supplementary GroupName: %s", group.GroupName)
+	}
 }
